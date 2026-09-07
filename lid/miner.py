@@ -15,10 +15,22 @@ from .utils import (
     categorical_column_pairs, safe_divide, percentile, is_stable_range,
     is_functionally_dependent, is_ordered_by_time, is_monotonic,
     find_total_candidates, sum_matches_total, rank_invariants,
+    sample_for_mining, prune_by_correlation,
 )
 
 
-def mine_invariants(df: pd.DataFrame, tolerance=0.01, min_support=0.95, max_formula_size=3):
+def mine_invariants(df: pd.DataFrame, tolerance=0.01, min_support=0.95, max_formula_size=3,
+                     max_rows=20000, correlation_prune_k=8):
+    """
+    max_rows: cap on rows used for mining (not checking) -- see
+        sample_for_mining for why sampling is safe here.
+    correlation_prune_k: cap on candidate columns considered per target
+        for linear-arithmetic search, ranked by correlation -- see
+        prune_by_correlation. This is what keeps mining tractable past
+        ~15-20 numeric columns; without it the O(k^m) combination search
+        is the dominant cost on wide tables.
+    """
+    df = sample_for_mining(df, max_rows=max_rows)
     invariants = []
     all_numeric_cols = list(df.select_dtypes(include="number").columns)
     # Exclude obvious identifier columns from ratio/arithmetic mining — they're
@@ -28,9 +40,10 @@ def mine_invariants(df: pd.DataFrame, tolerance=0.01, min_support=0.95, max_form
 
     # --- Linear arithmetic invariants ---
     for target in numeric_cols:
-        candidates = [c for c in numeric_cols if c != target]
-        if not candidates:
+        all_candidates = [c for c in numeric_cols if c != target]
+        if not all_candidates:
             continue
+        candidates = prune_by_correlation(df, target, all_candidates, top_k=correlation_prune_k)
         best_for_target = None
         for subset in small_combinations(candidates, max_size=max_formula_size):
             X = df[list(subset)]
