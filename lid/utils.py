@@ -180,6 +180,34 @@ def find_newly_correlated_columns(df, target, existing_cols, top_n=3):
     return list(corr.sort_values(ascending=False).head(top_n).index)
 
 
+def sample_for_mining(df: pd.DataFrame, max_rows=20000, seed=0):
+    """Mining is O(k^m) per target column, run against every row on every
+    candidate subset -- that cost scales with row count too, not just
+    column count. For tables beyond max_rows, mine on a random sample
+    instead of the full table: a well-formed invariant that holds on
+    99%+ of millions of rows will show the same signal on 20k of them,
+    at a fraction of the cost. Checking still runs on full batches --
+    only mining is sampled."""
+    if len(df) <= max_rows:
+        return df
+    return df.sample(n=max_rows, random_state=seed)
+
+
+def prune_by_correlation(df: pd.DataFrame, target: str, candidates: list, top_k=8):
+    """Before trying combinations of columns, cut the candidate pool
+    to the top_k most correlated with the target. Combinatorial search
+    is O(k^m) in the number of candidates -- on a 50-column table,
+    testing all subsets up to size 3 means ~20k formula fits per target
+    column, times 50 targets. Pruning to the 8 most-correlated candidates
+    per target cuts that by roughly two orders of magnitude, and in
+    practice a real linear invariant's terms are almost always among the
+    most-correlated columns to begin with."""
+    if len(candidates) <= top_k:
+        return candidates
+    corr = df[candidates + [target]].corr()[target].drop(target).abs()
+    return list(corr.sort_values(ascending=False).head(top_k).index)
+
+
 def rank_invariants(invariants):
     def score(inv):
         support = inv.get("support", 0.9)
